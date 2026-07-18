@@ -6,6 +6,38 @@ static NSString *TimelineTabKey = @"THFHomeTimelineContainerViewController.lastS
 static NSString *FollowingTimelineTabValue = @"latest";
 static NSInteger MostRecentTimelineVariant = 1;
 
+@interface _TtC10TFNUISwift26UnifiedSegmentedController : UIViewController
+@property(nonatomic, weak) id v1DataSource;
+@property(nonatomic, weak) id v2DataSource;
+@end
+
+@interface TFNScrollingSegmentedViewController : UIViewController
+@property(nonatomic, weak) id dataSource;
+@property(nonatomic) NSInteger labelBarHideMode;
+@end
+
+static BOOL IsHomeTimelineDataSource(id dataSource) {
+    return [dataSource isKindOfClass:NSClassFromString(
+        @"_TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController")];
+}
+
+static BOOL IsHomeUnifiedSegmentedController(
+    _TtC10TFNUISwift26UnifiedSegmentedController *controller) {
+    return IsHomeTimelineDataSource(controller.v1DataSource) ||
+        IsHomeTimelineDataSource(controller.v2DataSource);
+}
+
+static BOOL IsHomeScrollingDataSource(id dataSource) {
+    return IsHomeTimelineDataSource(dataSource) ||
+        ([dataSource isKindOfClass:
+            NSClassFromString(@"_TtC10TFNUISwift26UnifiedSegmentedController")] &&
+         IsHomeUnifiedSegmentedController(dataSource));
+}
+
+static NSInteger FollowingIndex(NSInteger index) {
+    return index == 0 ? 1 : index;
+}
+
 static BOOL StateIsAtTop(id state) {
     id value = [state isKindOfClass:NSDictionary.class] ? [state objectForKey:@"atTopLeft"] : nil;
     return [value respondsToSelector:@selector(boolValue)] && [value boolValue];
@@ -30,56 +62,59 @@ static BOOL ShouldPreserveScrollState(id state) {
 }
 
 %hook TFNScrollingSegmentedViewController
+/* Hide the home timeline label bar. */
 - (id)initWithDataSource:(id)dataSource delegate:(id)delegate externalLabelBar:(UIView *)externalLabelBar addLabelBarToNavigationBarBlur:(BOOL)addLabelBarToNavigationBarBlur useAlternateBackgroundColor:(BOOL)useAlternateBackgroundColor {
-    BOOL home = [dataSource isKindOfClass:NSClassFromString(@"_TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController")];
-    return %orig(dataSource, delegate, externalLabelBar, home ? NO : addLabelBarToNavigationBarBlur, useAlternateBackgroundColor);
+    BOOL home = IsHomeScrollingDataSource(dataSource);
+    id result = %orig(dataSource, delegate, externalLabelBar,
+        home ? NO : addLabelBarToNavigationBarBlur, useAlternateBackgroundColor);
+
+    if (home) {
+        [result setLabelBarHideMode:1];
+    }
+
+    return result;
 }
 
 - (void)setLabelBarHideMode:(NSInteger)mode {
-    for (id parent = self; parent; parent = [parent parentViewController]) {
-        if ([parent isKindOfClass:NSClassFromString(@"_TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController")] && mode == 0) {
-            %orig(1);
-            return;
-        }
-    }
-
-    %orig;
+    %orig(IsHomeScrollingDataSource(self.dataSource) ? 1 : mode);
 }
 %end
 
 %hook _TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController
-- (NSInteger)numberOfEntriesForSegmentedViewController:(id)controller {
+/* Show only Following. */
+- (NSInteger)numberOfTabsV1In:(id)controller {
     return MIN(%orig, 1);
 }
 
-- (UIViewController *)segmentedViewController:(id)controller viewControllerAtIndex:(NSInteger)index {
-    return %orig(controller, index ?: 1);
+- (NSInteger)numberOfTabsV2In:(id)controller {
+    return MIN(%orig, 1);
 }
 
-- (NSString *)segmentedViewController:(id)controller titleAtIndex:(NSInteger)index {
-    return %orig(controller, index ?: 1);
+- (UIViewController *)unifiedSegmentedController:(id)controller v1ViewControllerAtIndex:(NSInteger)index {
+    return %orig(controller, FollowingIndex(index));
 }
 
-- (NSAttributedString *)segmentedViewController:(id)controller attributedTitleAtIndex:(NSInteger)index {
-    return %orig(controller, index ?: 1);
+- (NSString *)unifiedSegmentedController:(id)controller v1TitleAtIndex:(NSInteger)index {
+    return %orig(controller, FollowingIndex(index));
 }
 
-- (NSString *)segmentedViewController:(id)controller accessibilityLabelAtIndex:(NSInteger)index {
-    return %orig(controller, index ?: 1);
+- (NSString *)unifiedSegmentedController:(id)controller v1AccessibilityLabelAtIndex:(NSInteger)index {
+    return %orig(controller, FollowingIndex(index));
+}
+
+- (UIViewController *)unifiedSegmentedController:(id)controller v2ViewControllerAtIndex:(NSInteger)index {
+    return %orig(controller, FollowingIndex(index));
+}
+
+- (id)unifiedSegmentedController:(id)controller v2DescriptorAtIndex:(NSInteger)index {
+    return %orig(controller, FollowingIndex(index));
 }
 
 - (BOOL)tfn_supportsTabBarCollapsing {
     return NO;
 }
 
-- (BOOL)tfn_supportsNavigationBarCollapsing {
-    return NO;
-}
-
-- (BOOL)segmentedViewControllerShouldAutoHideNavigationBar:(id)controller {
-    return NO;
-}
-
+/* Keep Following selected. */
 - (void)clearLastSelectedTabIdentifier {
 }
 
@@ -93,6 +128,7 @@ static BOOL ShouldPreserveScrollState(id state) {
 %end
 
 %hook THFURTHomeTimelineStream
+/* Save scroll state. */
 - (void)setVisibleScrollPositionState:(id)state {
     if (ShouldPreserveScrollState(state)) {
         LastDeepScrollState = state;
@@ -120,15 +156,39 @@ static BOOL ShouldPreserveScrollState(id state) {
 
     return state;
 }
+
+/* Keep Following in chronological order. */
+- (BOOL)enableRankedFollowingTimeline {
+    return NO;
+}
 %end
 
 %hook TFNTwitterAccount
+/* Block automatic jumps to the top. */
 - (NSInteger)restartFromTopNavigationMinBackgroundMinutes {
     return -1;
 }
 %end
 
 %hook TwitterHomeFeatures
+/* Keep cached timeline data across launches. */
+- (BOOL)coldStartEarlyCacheTruncationEnabled {
+    return NO;
+}
+
+- (double)coldStartStaleCacheThresholdMinutes {
+    return DBL_MAX;
+}
+
+- (BOOL)clearCacheAfterManualJTTEnabled {
+    return NO;
+}
+
+- (BOOL)clearCacheAutoloadBottomAfterManualJTTEnabled {
+    return NO;
+}
+
+/* Block background refreshes that reset scroll position. */
 - (double)homeTimelineForegroundRefreshMinBackgroundSeconds {
     return DBL_MAX;
 }
@@ -155,6 +215,7 @@ static BOOL ShouldPreserveScrollState(id state) {
 %end
 
 %hook NSUserDefaults
+/* Persist Following as the selected timeline. */
 - (id)objectForKey:(NSString *)key {
     if ([key isEqualToString:TimelineTabKey]) {
         return FollowingTimelineTabValue;
@@ -190,13 +251,8 @@ static BOOL ShouldPreserveScrollState(id state) {
 %end
 
 %hook THFHomeTimelineFilterStateProvider
+/* Keep Following in chronological order. */
 - (BOOL)isRankedFollowingTimelineEnabled {
-    return NO;
-}
-%end
-
-%hook URTHomeTimelineStream
-- (BOOL)enableRankedFollowingTimeline {
     return NO;
 }
 %end
