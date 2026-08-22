@@ -1,258 +1,67 @@
-#import <UIKit/UIKit.h>
-#import <float.h>
+name: Build Tweak
+on: [push, workflow_dispatch]
 
-static id LastDeepScrollState;
-static NSString *TimelineTabKey = @"THFHomeTimelineContainerViewController.lastSelectedTimelineTabIdentifier";
-static NSString *FollowingTimelineTabValue = @"latest";
-static NSInteger MostRecentTimelineVariant = 1;
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-@interface _TtC10TFNUISwift26UnifiedSegmentedController : UIViewController
-@property(nonatomic, weak) id v1DataSource;
-@property(nonatomic, weak) id v2DataSource;
-@end
+      - name: Install dependencies
+        run: |
+          brew install ldid dpkg
 
-@interface TFNScrollingSegmentedViewController : UIViewController
-@property(nonatomic, weak) id dataSource;
-@property(nonatomic) NSInteger labelBarHideMode;
-@end
+      - name: Install Theos and iOS SDKs
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          curl -fsSL https://github.com/theos/sdks/archive/master.zip -o sdks.zip
+          unzip -q sdks.zip
+          mkdir -p $HOME/theos/sdks
+          cp -r sdks-master/*.sdk $HOME/theos/sdks/
+          rm -rf sdks.zip sdks-master
 
-static BOOL IsHomeTimelineDataSource(id dataSource) {
-    return [dataSource isKindOfClass:NSClassFromString(
-        @"_TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController")];
-}
+      - name: Auto-fix macro in Tweak.xm
+        run: |
+          python3 -c "with open('Tweak.xm', 'r') as f: c = f.read(); open('Tweak.xm', 'w').write(c.replace('%orig', '(%orig)'))"
 
-static BOOL IsHomeUnifiedSegmentedController(
-    _TtC10TFNUISwift26UnifiedSegmentedController *controller) {
-    return IsHomeTimelineDataSource(controller.v1DataSource) ||
-        IsHomeTimelineDataSource(controller.v2DataSource);
-}
+      - name: Create Build Files
+        run: |
+          cat << 'EOF' > Makefile
+          TARGET := iphone:clang:latest:14.0
+          ARCHS = arm64
+          INSTALL_TARGET_PROCESSES = Twitter
 
-static BOOL IsHomeScrollingDataSource(id dataSource) {
-    return IsHomeTimelineDataSource(dataSource) ||
-        ([dataSource isKindOfClass:
-            NSClassFromString(@"_TtC10TFNUISwift26UnifiedSegmentedController")] &&
-         IsHomeUnifiedSegmentedController(dataSource));
-}
+          include $(THEOS)/makefiles/common.mk
 
-static NSInteger FollowingIndex(NSInteger index) {
-    return index == 0 ? 1 : index;
-}
+          TWEAK_NAME = XNotForMe
+          XNotForMe_FILES = Tweak.xm
+          XNotForMe_CFLAGS = -fobjc-arc
 
-static BOOL StateIsAtTop(id state) {
-    id value = [state isKindOfClass:NSDictionary.class] ? [state objectForKey:@"atTopLeft"] : nil;
-    return [value respondsToSelector:@selector(boolValue)] && [value boolValue];
-}
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          EOF
 
-static CGFloat StateContentOffsetY(id state) {
-    id value = [state isKindOfClass:NSDictionary.class] ? [state objectForKey:@"contentOffset"] : nil;
+          cat << 'EOF' > control
+          Package: com.n3d1117.xnotforme
+          Name: XNotForMe
+          Version: 1.0.0
+          Architecture: iphoneos-arm64
+          Description: Remove For You tab
+          Maintainer: n3d1117
+          Author: n3d1117
+          Section: Tweaks
+          EOF
 
-    if ([value isKindOfClass:NSString.class]) {
-        return CGPointFromString(value).y;
-    }
+      - name: Compile Tweak
+        run: |
+          make package FINALPACKAGE=1
 
-    if ([value isKindOfClass:NSValue.class]) {
-        return [value CGPointValue].y;
-    }
-
-    return 0;
-}
-
-static BOOL ShouldPreserveScrollState(id state) {
-    return state && !StateIsAtTop(state) && StateContentOffsetY(state) > 0;
-}
-
-%hook TFNScrollingSegmentedViewController
-/* Hide the home timeline label bar. */
-- (id)initWithDataSource:(id)dataSource delegate:(id)delegate externalLabelBar:(UIView *)externalLabelBar addLabelBarToNavigationBarBlur:(BOOL)addLabelBarToNavigationBarBlur useAlternateBackgroundColor:(BOOL)useAlternateBackgroundColor {
-    BOOL home = IsHomeScrollingDataSource(dataSource);
-    id result = %orig(dataSource, delegate, externalLabelBar,
-        home ? NO : addLabelBarToNavigationBarBlur, useAlternateBackgroundColor);
-
-    if (home) {
-        [result setLabelBarHideMode:1];
-    }
-
-    return result;
-}
-
-- (void)setLabelBarHideMode:(NSInteger)mode {
-    %orig(IsHomeScrollingDataSource(self.dataSource) ? 1 : mode);
-}
-%end
-
-%hook _TtC32TwitterHomeFeatureImplementation35HomeTimelineContainerViewController
-/* Show only Following. */
-- (NSInteger)numberOfTabsV1In:(id)controller {
-    return MIN(%orig, 1);
-}
-
-- (NSInteger)numberOfTabsV2In:(id)controller {
-    return MIN(%orig, 1);
-}
-
-- (UIViewController *)unifiedSegmentedController:(id)controller v1ViewControllerAtIndex:(NSInteger)index {
-    return %orig(controller, FollowingIndex(index));
-}
-
-- (NSString *)unifiedSegmentedController:(id)controller v1TitleAtIndex:(NSInteger)index {
-    return %orig(controller, FollowingIndex(index));
-}
-
-- (NSString *)unifiedSegmentedController:(id)controller v1AccessibilityLabelAtIndex:(NSInteger)index {
-    return %orig(controller, FollowingIndex(index));
-}
-
-- (UIViewController *)unifiedSegmentedController:(id)controller v2ViewControllerAtIndex:(NSInteger)index {
-    return %orig(controller, FollowingIndex(index));
-}
-
-- (id)unifiedSegmentedController:(id)controller v2DescriptorAtIndex:(NSInteger)index {
-    return %orig(controller, FollowingIndex(index));
-}
-
-- (BOOL)tfn_supportsTabBarCollapsing {
-    return NO;
-}
-
-/* Keep Following selected. */
-- (void)clearLastSelectedTabIdentifier {
-}
-
-- (void)selectTimelineVariant:(NSInteger)variant shouldRefresh:(BOOL)shouldRefresh {
-    %orig(MostRecentTimelineVariant, shouldRefresh);
-}
-
-- (void)selectFilteredTimelineVariant:(NSInteger)variant shouldRefresh:(BOOL)shouldRefresh {
-    %orig(MostRecentTimelineVariant, shouldRefresh);
-}
-%end
-
-%hook THFURTHomeTimelineStream
-/* Save scroll state. */
-- (void)setVisibleScrollPositionState:(id)state {
-    if (ShouldPreserveScrollState(state)) {
-        LastDeepScrollState = state;
-    }
-
-    if (StateIsAtTop(state) && LastDeepScrollState) {
-        return;
-    }
-
-    if (state) {
-        %orig;
-    }
-}
-
-- (id)getVisibleScrollPositionState {
-    id state = %orig;
-
-    if (ShouldPreserveScrollState(state)) {
-        LastDeepScrollState = state;
-    }
-
-    if (StateIsAtTop(state) && LastDeepScrollState) {
-        state = LastDeepScrollState;
-    }
-
-    return state;
-}
-
-/* Keep Following in chronological order. */
-- (BOOL)enableRankedFollowingTimeline {
-    return NO;
-}
-%end
-
-%hook TFNTwitterAccount
-/* Block automatic jumps to the top. */
-- (NSInteger)restartFromTopNavigationMinBackgroundMinutes {
-    return -1;
-}
-%end
-
-%hook TwitterHomeFeatures
-/* Keep cached timeline data across launches. */
-- (BOOL)coldStartEarlyCacheTruncationEnabled {
-    return NO;
-}
-
-- (double)coldStartStaleCacheThresholdMinutes {
-    return DBL_MAX;
-}
-
-- (BOOL)clearCacheAfterManualJTTEnabled {
-    return NO;
-}
-
-- (BOOL)clearCacheAutoloadBottomAfterManualJTTEnabled {
-    return NO;
-}
-
-/* Block background refreshes that reset scroll position. */
-- (double)homeTimelineForegroundRefreshMinBackgroundSeconds {
-    return DBL_MAX;
-}
-
-- (double)homeTimelineWarmStartMinBackgroundMinutes {
-    return DBL_MAX;
-}
-
-- (NSInteger)restartFromTopNavigationMinBackgroundMinutes {
-    return NSIntegerMax;
-}
-
-- (NSInteger)jumpToTopNavigationMinBackgroundMinutes {
-    return NSIntegerMax;
-}
-
-- (double)homeTimelineFetchNewerOnNavigateMinMinutes {
-    return DBL_MAX;
-}
-
-- (BOOL)isHomeTimelineFetchNewerOnNavigationEnabled {
-    return NO;
-}
-%end
-
-%hook NSUserDefaults
-/* Persist Following as the selected timeline. */
-- (id)objectForKey:(NSString *)key {
-    if ([key isEqualToString:TimelineTabKey]) {
-        return FollowingTimelineTabValue;
-    }
-
-    return %orig;
-}
-
-- (NSString *)stringForKey:(NSString *)key {
-    if ([key isEqualToString:TimelineTabKey]) {
-        return FollowingTimelineTabValue;
-    }
-
-    return %orig;
-}
-
-- (void)setObject:(id)value forKey:(NSString *)key {
-    if ([key isEqualToString:TimelineTabKey]) {
-        %orig(FollowingTimelineTabValue, key);
-        return;
-    }
-
-    %orig(value, key);
-}
-
-- (void)removeObjectForKey:(NSString *)key {
-    if ([key isEqualToString:TimelineTabKey]) {
-        return;
-    }
-
-    %orig(key);
-}
-%end
-
-%hook THFHomeTimelineFilterStateProvider
-/* Keep Following in chronological order. */
-- (BOOL)isRankedFollowingTimelineEnabled {
-    return NO;
-}
-%end
+      - name: Upload Output Files
+        uses: actions/upload-artifact@v4
+        with:
+          name: XNotForMe-Compiled
+          path: |
+            .theos/obj/*.dylib
+            .theos/obj/debug/*.dylib
+            packages/*.deb
