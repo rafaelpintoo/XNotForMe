@@ -1,0 +1,41 @@
+name: Build Tweak
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: themarron/theos-action@v1
+
+      - name: Create Build Files
+        run: |
+          cat << 'EOF' > Makefile
+          TARGET := iphone:clang:latest:14.0
+          INSTALL_TARGET_PROCESSES = Twitter
+          include $(THEOS)/makefiles/common.mk
+          TWEAK_NAME = XNotForMe
+          XNotForMe_FILES = Tweak.xm
+          XNotForMe_CFLAGS = -fobjc-arc
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          EOF
+
+          cat << 'EOF' > control
+          Package: com.n3d1117.xnotforme
+          Name: XNotForMe
+          Version: 1.0.0
+          Architecture: iphoneos-arm64
+          Description: Remove For You tab
+          Maintainer: n3d1117
+          Author: n3d1117
+          Section: Tweaks
+          EOF
+
+      - name: Compile
+        run: make package FINALPACKAGE=1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XNotForMe-dylib
+          path: .theos/obj/debug/*.dylib
