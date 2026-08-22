@@ -5,32 +5,31 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Build Tools
         run: |
           brew install ldid dpkg
 
-      - name: Install Theos and iOS SDKs
+      - name: Setup Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          git clone --depth=1 https://github.com/theos/sdks.git $HOME/theos/sdks
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          git clone --depth 1 https://github.com/theos/sdks.git ~/theos/sdks
 
-      - name: Fetch Original Tweak and Fix Macro
+      - name: Fetch and Patch Tweak.xm
         run: |
           curl -fsSL https://raw.githubusercontent.com/n3d1117/XNotForMe/main/Tweak.xm -o Tweak.xm
           python3 -c "
           with open('Tweak.xm', 'r') as f:
-              code = f.read()
-          header = '#import <Foundation/Foundation.h>\nstatic inline NSInteger safe_min(NSInteger a, NSInteger b) { return a < b ? a : b; }\n'
-          code = header + code.replace('MIN(', 'safe_min(')
+              content = f.read()
+          patch = 'static inline NSInteger tweak_min(NSInteger a, NSInteger b) { return (a < b) ? a : b; }\n'
+          content = patch + content.replace('MIN(', 'tweak_min(')
           with open('Tweak.xm', 'w') as f:
-              f.write(code)
+              f.write(content)
           "
 
-      - name: Create Build Configuration
+      - name: Setup Theos Files
         run: |
           cat << 'EOF' > Makefile
           TARGET := iphone:clang:latest:14.0
@@ -57,16 +56,19 @@ jobs:
           Section: Tweaks
           EOF
 
-      - name: Compile Tweak
+      - name: Build Tweak
         run: |
+          export THEOS=~/theos
           make package FINALPACKAGE=1
 
-      - name: Upload Output Files
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p output
+          find .theos/obj -name "*.dylib" -exec cp {} output/ \; 2>/dev/null || true
+          find packages -name "*.deb" -exec cp {} output/ \; 2>/dev/null || true
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: XNotForMe-Compiled
-          path: |
-            packages/*.deb
-            .theos/obj/*.dylib
-            .theos/obj/debug/*.dylib
-            .theos/obj/arm64/*.dylib
+          name: XNotForMe-Ready
+          path: output/*
