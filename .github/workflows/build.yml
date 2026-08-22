@@ -3,21 +3,32 @@ on: [push, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: themarron/theos-action@v1
+      - name: Install Theos and SDKs
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          curl -fsSL https://github.com/theos/sdks/archive/master.zip -o sdks.zip
+          unzip -q sdks.zip
+          mv sdks-master/*.sdk $HOME/theos/sdks/
+          rm -rf sdks.zip sdks-master
 
       - name: Create Build Files
         run: |
           cat << 'EOF' > Makefile
           TARGET := iphone:clang:latest:14.0
+          ARCHS = arm64
           INSTALL_TARGET_PROCESSES = Twitter
+
           include $(THEOS)/makefiles/common.mk
+
           TWEAK_NAME = XNotForMe
           XNotForMe_FILES = Tweak.xm
           XNotForMe_CFLAGS = -fobjc-arc
+
           include $(THEOS_MAKE_PATH)/tweak.mk
           EOF
 
@@ -32,10 +43,16 @@ jobs:
           Section: Tweaks
           EOF
 
-      - name: Compile
-        run: make package FINALPACKAGE=1
+      - name: Compile Tweak
+        run: |
+          export THEOS=$HOME/theos
+          make package FINALPACKAGE=1
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Output Files
+        uses: actions/upload-artifact@v4
         with:
-          name: XNotForMe-dylib
-          path: .theos/obj/debug/*.dylib
+          name: XNotForMe-Compiled
+          path: |
+            .theos/obj/*.dylib
+            .theos/obj/debug/*.dylib
+            packages/*.deb
