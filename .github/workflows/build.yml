@@ -8,15 +8,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Theos and SDKs
+      - name: Install dependencies
+        run: |
+          brew install ldid dpkg
+
+      - name: Install Theos and iOS SDKs
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           curl -fsSL https://github.com/theos/sdks/archive/master.zip -o sdks.zip
           unzip -q sdks.zip
-          mv sdks-master/*.sdk $HOME/theos/sdks/
+          mkdir -p $HOME/theos/sdks
+          cp -r sdks-master/*.sdk $HOME/theos/sdks/
           rm -rf sdks.zip sdks-master
 
-      - name: Create Build Files
+      - name: Fetch Original Tweak and Fix Macro
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/n3d1117/XNotForMe/main/Tweak.xm -o Tweak.xm
+          python3 -c "
+          with open('Tweak.xm', 'r') as f:
+              code = f.read()
+          header = 'static inline NSInteger safe_min(NSInteger a, NSInteger b) { return a < b ? a : b; }\n'
+          code = header + code.replace('MIN(', 'safe_min(')
+          with open('Tweak.xm', 'w') as f:
+              f.write(code)
+          "
+
+      - name: Create Build Configuration
         run: |
           cat << 'EOF' > Makefile
           TARGET := iphone:clang:latest:14.0
@@ -45,7 +63,6 @@ jobs:
 
       - name: Compile Tweak
         run: |
-          export THEOS=$HOME/theos
           make package FINALPACKAGE=1
 
       - name: Upload Output Files
