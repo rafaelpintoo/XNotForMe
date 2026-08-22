@@ -16,11 +16,7 @@ jobs:
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          curl -fsSL https://github.com/theos/sdks/archive/master.zip -o sdks.zip
-          unzip -q sdks.zip
-          mkdir -p $HOME/theos/sdks
-          cp -r sdks-master/*.sdk $HOME/theos/sdks/
-          rm -rf sdks.zip sdks-master
+          git clone --depth=1 https://github.com/theos/sdks.git $HOME/theos/sdks
 
       - name: Fetch Original Tweak and Fix Macro
         run: |
@@ -28,7 +24,7 @@ jobs:
           python3 -c "
           with open('Tweak.xm', 'r') as f:
               code = f.read()
-          header = 'static inline NSInteger safe_min(NSInteger a, NSInteger b) { return a < b ? a : b; }\n'
+          header = '#import <Foundation/Foundation.h>\nstatic inline NSInteger safe_min(NSInteger a, NSInteger b) { return a < b ? a : b; }\n'
           code = header + code.replace('MIN(', 'safe_min(')
           with open('Tweak.xm', 'w') as f:
               f.write(code)
@@ -70,6 +66,7 @@ jobs:
         with:
           name: XNotForMe-Compiled
           path: |
+            packages/*.deb
             .theos/obj/*.dylib
             .theos/obj/debug/*.dylib
-            packages/*.deb
+            .theos/obj/arm64/*.dylib
